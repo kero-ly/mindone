@@ -8,6 +8,7 @@ import os
 import shutil
 
 from ldm.data.dataset import build_dataset
+from ldm.data.dataset_dist import calculate_split, download_tar
 from ldm.modules.logger import set_logger
 from ldm.modules.lora import inject_trainable_lora
 from ldm.modules.train.callback import EvalSaveCallback, OverflowMonitor
@@ -52,6 +53,16 @@ def init_env(args):
             gradients_mean=True,
             device_num=device_num,
         )
+        # download dataset
+        print("device_num", device_num, "rank_id", rank_id, flush=True)
+        start_part_idx, start_tar_idx, start_sample_idx, end_part_idx, end_tar_idx, end_sample_idx, tars_to_sync = calculate_split(device_num / 8, rank_id / 8)
+        #start_part_idx, start_tar_idx, start_sample_idx, end_part_idx, end_tar_idx, end_sample_idx, tars_to_sync = calculate_split(1024, 0) # 79
+        download_tar(tars_to_sync, start_sample_idx, end_sample_idx)
+        print("device_num", device_num, "rank_id", rank_id,
+                "start_part_idx", start_part_idx, "start_tar_idx", start_tar_idx, "start_sample_idx", start_sample_idx,
+                "end_part_idx", end_part_idx, "end_tar_idx", end_tar_idx, "end_sample_idx", end_sample_idx,
+                "tars_to_sync", tars_to_sync, flush=True)
+        
     else:
         device_num = 1
         device_id = int(os.getenv("DEVICE_ID", 0))
@@ -149,6 +160,7 @@ def main(args):
 
     # build dataset
     tokenizer = latent_diffusion_with_loss.cond_stage_model.tokenizer
+    args.data_path = "/cache/merged_imgp_text.csv"
     dataset = build_dataset(args, rank_id, device_num, tokenizer)
 
     # lora injection
@@ -290,7 +302,7 @@ def main(args):
 if __name__ == "__main__":
     logger.debug("process id:", os.getpid())
     parser = argparse.ArgumentParser()
-    parser.add_argument("--use_parallel", default=False, type=str2bool, help="use parallel")
+    parser.add_argument("--use_parallel", default=True, type=str2bool, help="use parallel")
     parser.add_argument("--data_path", default="dataset", type=str, help="data path")
     parser.add_argument("--output_path", default="output/", type=str, help="output directory to save training results")
     parser.add_argument(

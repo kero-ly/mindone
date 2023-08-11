@@ -24,7 +24,9 @@ import numpy as np
 import pandas as pd
 from ldm.data.t2i_collate import data_column, t2i_collate
 from PIL import Image
+import numpy as np
 
+from mindspore.communication.management import init, get_rank, get_group_size, get_local_rank, get_local_rank_size
 from mindspore.dataset import GeneratorDataset
 
 _logger = logging.getLogger(__name__)
@@ -70,7 +72,17 @@ def load_data(
     else:
         batchlen = sample_num
     metaloader = MetaLoader(dataloaders, datalen=batchlen, task_num=len(dataloaders.keys()))
-    dataset = GeneratorDataset(metaloader, column_names=data_column, shuffle=True)
+
+    device_num_per_workers = get_local_rank_size()
+    shard_id = get_local_rank()
+    print("device_num_per_workers", device_num_per_workers, "shard_id", shard_id, flush=True)
+    dataset = GeneratorDataset(metaloader, column_names=data_column, shuffle=True,
+                               num_shards=device_num_per_workers,
+                               shard_id=shard_id)
+
+    print("dataset size per shard:", dataset.get_dataset_size(), flush=True)
+    #for d in dataset:
+    #    print(d[0].shape, d[1])
 
     return dataset
 
@@ -84,6 +96,7 @@ def build_dataloader_ft(dataset, datalens, collate_fn, batch_size, device_num, r
 
 
 def list_image_files_captions_recursively(data_path):
+    '''
     anno_dir = data_path
     anno_list = sorted(
         [os.path.join(anno_dir, f) for f in list(filter(lambda x: x.endswith(".csv"), os.listdir(anno_dir)))]
@@ -96,21 +109,32 @@ def list_image_files_captions_recursively(data_path):
         all_captions.extend(list(db["text"]))
     assert len(all_images) == len(all_captions)
     all_images = [os.path.join(data_path, f) for f in all_images]
-
+    '''
+    csv = pd.read_csv(data_path)
+    all_images = list(csv["dir"])
+    all_captions = list(csv["text"])
+    #import pdb
+    #pdb.set_trace()
     return all_images, all_captions
 
 
 def filter_small_image(all_images, all_captions, image_filter_size):
     filted_images = []
     filted_captions = []
+    filter_count = 0
     for image, caption in zip(all_images, all_captions):
         w, h = imagesize.get(image)
         if min(w, h) < image_filter_size:
             _logger.info(f"The size of image {image}: {w}x{h} < `image_filter_size` and excluded from training.")
+            filter_count += 1
             continue
         else:
             filted_images.append(image)
             filted_captions.append(caption)
+    while filter_count > 0:
+        filted_images.append(np.random.choice(filted_images))
+        filted_captions.append(np.random.choice(filted_captions))
+        filter_count -= 1
     return filted_images, filted_captions
 
 
